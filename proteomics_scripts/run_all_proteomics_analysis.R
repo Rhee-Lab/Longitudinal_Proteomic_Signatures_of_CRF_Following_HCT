@@ -9,15 +9,10 @@ source(here::here("proteomics_scripts", "proteomics_data_processing.R"))
 source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "proteomics_linear_regression.R"))
 source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "proteomics_linear_regression_enrichment.R"))
 source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "proteomics_linear_regression_plots.R"))
-# Logistic Regression
-source(here::here("proteomics_scripts", "VO2peak_logistic_regression_scripts", "proteomics_logistic_regression.R"))
-source(here::here("proteomics_scripts", "VO2peak_logistic_regression_scripts", "proteomics_logistic_regression_enrichment.R"))
-source(here::here("proteomics_scripts", "VO2peak_logistic_regression_scripts", "proteomics_logistic_regression_plots.R"))
-# Extreme Subsets
+# Extreme Subsets, Linear Regression
 source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "proteomics_top_vs_bottom_diff_exp.R"))
 source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "proteomics_top_vs_bottom_diff_exp_enrichment.R"))
 source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "proteomics_top_vs_bottom_diff_exp_plots.R"))
-
 
 # Additional Figures (Proteomics, Metabolomics)
 source(here::here("proteomics_scripts", "generate_additional_figures.R"))
