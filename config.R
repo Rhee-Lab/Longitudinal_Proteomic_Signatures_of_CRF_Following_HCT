@@ -74,35 +74,10 @@ proteomics_jobs_to_run_linear_regression <- c("Cross-Sectional", "Double_Delta")
 
 
 ###
-# Metabolomics — Filtering
-###
-metab_id_colname <- "feature_label"
-# Maximum fraction of missing values allowed per metabolite
-metabolomics_missingness_cutoff <- 0.20
-
-# Minimum max peak intensity across samples to keep a metabolite
-metabolomics_low_max_peak_intensity_cutoff <- 500
-
-# Low-variance filtering: remove metabolites below this variance percentile
-metabolomics_low_variance_cutoff <- 0.05
-
-# PCA: keep top n% highest-variance metabolites for a secondary PCA view
-metabolomics_pca_var_top_pct <- 10
-
-
-###
-# Metabolomics - Linear Regression
-###
-metabolomics_jobs_to_run_linear_regression <- c("Cross-Sectional", "Double_Delta")
-# Available job types: "Cross-Sectional", "Delta", "Pct_Change", "Lagged_Association", "Double_Delta"
-
-
-###
 # Plotting
 ###
 font_size <- 25
 font_style <- "Roboto"
-run_for_metab <- FALSE
 
 # GO:BP category colors for enrichment plots
 gobp_palette <- c(

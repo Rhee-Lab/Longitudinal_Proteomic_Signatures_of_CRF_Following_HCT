@@ -285,7 +285,7 @@ generate_scatter_plots()
 
 
 ######################################################################
-# Generate Top VO2peak-correlating Proteins and Metabolites Lists
+# Generate Top VO2peak-correlating Proteins List
 ######################################################################
 calculate_top_correlating_proteins <- function() {
 
