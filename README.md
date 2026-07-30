@@ -1,6 +1,6 @@
 # Longitudinal Proteomic Signatures of Cardiorespiratory Fitness Following Hematopoietic Cell Transplantation
 
- - Associated Publication: (in-progress)
+ - Associated Publication: (to be filled upon publication)
  - Authors: June-Wha Rhee MD<sup>1</sup>, Lazarina Butkovich PhD<sup>1</sup>, Kavya Achanta PhD<sup>1</sup>, Emma Grigorian<sup>2</sup>, Alysia Bosworth<sup>2</sup>, Sophia Albanese<sup>2</sup>, Alex Flores<sup>2</sup>, Caitlyn Estrada<sup>2</sup>, Mareen Kassabian<sup>2</sup>, Meagan Echevarria MPH<sup>2</sup>, Lanie Lindenfeld MA<sup>2</sup>, Xinyi Du MPH<sup>2</sup>, Congying Xia MD PhD <sup>3,4</sup>, Craig Hyde PhD<sup>5</sup>, Cheryl Keogh-Tow PhD<sup>5</sup>, Cassandra Tierney PhD<sup>5</sup>, Jaron Arbet PhD<sup>2</sup>, Kyuwan Lee PhD<sup>6</sup>, Faizi Jamal MD<sup>1</sup>, F. Lennie Wong PhD<sup>2</sup>, Ryotaro Nakamura MD<sup>8</sup>, James Januzzi, MD<sup>7</sup>, Yun Rose Li<sup>9</sup>, Lee Jones PhD<sup>2</sup>, Bonnie Ky MD, MSCE<sup>3,4</sup>, Raja Mangipudy PhD<sup>5</sup>, Saro Armenian DO MPH<sup>2,x</sup>, Vishal Vaidya PhD <sup>5,x<sup> 
  - Affiliations:
     - <sup>1</sup> Department of Medicine, City of Hope Comprehensive Cancer Center, Duarte, CA 
@@ -17,7 +17,7 @@
  - GitHub repository author: Lazarina Butkovich, PhD
 
 ## Study Overview
-(in-progress)
+(to be filled upon publication)
 
 ## Repository Setup
 - This respository uses [renv](https://rstudio.github.io/renv/articles/renv.html) as the R package manager. Package versions are recorded in the renv.lock file, so the project environment can be reproduced on another machine (Windows).
