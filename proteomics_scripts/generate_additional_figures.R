@@ -1,6 +1,4 @@
 run_generate_additional_figures <- function() {
-# run_for_metab: boolean, if TRUE, run figure generation that includes metabolomics data
-# run_for_metab <- FALSE
 
 ######################################################################
 # Protein-specific scatter plots for VO2peak vs NPX_mean

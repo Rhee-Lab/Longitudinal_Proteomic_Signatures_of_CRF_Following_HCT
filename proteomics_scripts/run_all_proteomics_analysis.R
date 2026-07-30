@@ -20,7 +20,7 @@ source(here::here("proteomics_scripts", "VO2peak_linear_regression_scripts", "pr
 
 
 # Additional Figures (Proteomics, Metabolomics)
-source(here::here("generate_additional_figures.R"))
+source(here::here("proteomics_scripts", "generate_additional_figures.R"))
 # Bioimpedance analyses
 source(here::here("proteomics_scripts", "bioimpedance_linear_regression_scripts", "prot_bioimp_linear_regression.R"))
 source(here::here("proteomics_scripts", "bioimpedance_linear_regression_scripts", "prot_bioimp_linear_regression_enrichment.R"))
