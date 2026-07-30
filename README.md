@@ -94,3 +94,6 @@ renv::status()
         - Compilation of functions shared across multiple scripts
     - config.R
         - Location of values to set manually
+
+- Input files:
+    - Contact Lazarina Butkovich (lbutkovich@coh.org) to inquire about access to raw data for input to this workflow.
