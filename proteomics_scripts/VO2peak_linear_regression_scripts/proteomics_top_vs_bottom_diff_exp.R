@@ -53,7 +53,7 @@ plot_VO2peak_distributions <- function(patient_meta, top_patients_list,
         geom_text(data = n_labels, aes(x = Group, y = y, label = label), vjust = -0.5, size = font_size / 3, inherit.aes = FALSE) +
         labs(title = "",
             x = "Patient Group",
-                y = paste0("VO\u2082peak at ", tp)) +
+                y = vo2_label(paste0("VO2peak at ", tp))) +
         coord_cartesian(ylim = y_range) +
         theme_bw() +
         theme(panel.grid.major = element_blank(),

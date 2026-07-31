@@ -33,6 +33,28 @@ theme_bw <- function(base_size = 11, base_family = font_style, base_line_size = 
                     base_line_size = base_line_size, base_rect_size = base_rect_size)
 }
 
+vo2_label <- function(text) {
+  # plotmath label helper for VO2peak
+  # - Turn a plain label string into a plotmath expression in which "VO2peak" is
+  #   typeset as VO with a "2peak" subscript (or "VO2" as VO with a "2" subscript).
+  if (!grepl("VO2", text, fixed = TRUE)) return(text)
+
+  one_line <- function(s) {
+    m <- regexpr("VO2(peak)?", s)
+    if (m == -1L) return(s)
+    hit  <- regmatches(s, m)
+    pre  <- substr(s, 1, m - 1)
+    post <- substr(s, m + attr(m, "match.length"), nchar(s))
+    out  <- if (identical(hit, "VO2peak")) quote(VO[2 * peak]) else quote(VO[2])
+    if (nzchar(pre))  out <- bquote(.(pre) * .(out))
+    if (nzchar(post)) out <- bquote(.(out) * .(post))
+    out
+  }
+
+  parts <- lapply(strsplit(text, "\n", fixed = TRUE)[[1]], one_line)
+  Reduce(function(a, b) bquote(atop(.(a), .(b))), parts, right = TRUE)
+}
+
 
 ###
 # Centralised path helpers — use these instead of defining input_folder / output_folder in every script
@@ -208,7 +230,7 @@ generate_correlation_plot <- function(df, sample_meta, y_var, filename,
 
   # Visit label for the plot title
   visit_label <- if (!is.null(visit_filter)) paste0(" (", paste(visit_filter, collapse = "/"), ")") else ""
-  plot_title <- if (!is.null(title)) title else paste0("Feature Correlation with ", gsub("VO2", "VO\u2082", y_var), visit_label)
+  plot_title <- if (!is.null(title)) title else paste0("Feature Correlation with ", vo2_label(y_var), visit_label)
 
   p <- ggplot(cor_df, aes(x = rank, y = r)) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", linewidth = 1) +

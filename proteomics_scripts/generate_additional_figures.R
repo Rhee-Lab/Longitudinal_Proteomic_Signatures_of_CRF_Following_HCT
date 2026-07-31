@@ -374,7 +374,7 @@ calculate_top_correlating_proteins <- function() {
     visit_filter = NULL,
     n_top_labels = n_top_labels,
     text_size    = font_size,
-    y_label      = "Pearson r,\nProtein Abundance vs. VO\u2082peak"
+    y_label      = vo2_label("Pearson r,\nProtein Abundance vs. VO2peak")
   )
 
   # Per-timepoint
@@ -390,7 +390,7 @@ calculate_top_correlating_proteins <- function() {
       visit_filter = tp,
       n_top_labels = n_top_labels,
       text_size    = font_size,
-      y_label      = paste0("Pearson r,\n", tp, " Protein Abundance vs. VO\u2082peak")
+      y_label      = vo2_label(paste0("Pearson r,\n", tp, " Protein Abundance vs. VO2peak"))
     )
   }
 
@@ -451,7 +451,7 @@ calculate_top_correlating_proteins <- function() {
         visit_filter = NULL,
         n_top_labels = n_top_labels,
         text_size    = font_size,
-        y_label      = paste0("Pearson r, Delta Protein Abundance\nvs. Delta VO\u2082peak (", cfg$followup, "-Baseline)")
+        y_label      = vo2_label(paste0("Pearson r, Delta Protein Abundance\nvs. Delta VO2peak (", cfg$followup, "-Baseline)"))
       )
     }
     message("Double_Delta correlation plots saved.")
@@ -490,8 +490,8 @@ calculate_top_correlating_proteins <- function() {
         visit_filter = cfg$visit_filter,
         n_top_labels = n_top_labels,
         text_size    = font_size,
-        y_label      = paste0("Pearson r, ", cfg$visit_filter,
-                              " Protein Abundance\nvs. Delta VO\u2082peak (", cfg$visit_filter, "-Baseline)")
+        y_label      = vo2_label(paste0("Pearson r, ", cfg$visit_filter,
+                              " Protein Abundance\nvs. Delta VO2peak (", cfg$visit_filter, "-Baseline)"))
       )
     }
     message("Delta correlation plots saved.")
@@ -525,9 +525,9 @@ calculate_top_correlating_proteins <- function() {
 
       # Build descriptive y-axis label for lagged association
       vo2_delta_label <- if (cfg$vo2_col == "delta_VO2peak_6m_Baseline") {
-        "Delta VO\u2082peak (6m-Baseline)"
+        vo2_label("Delta VO2peak (6m-Baseline)")
       } else {
-        "Delta VO\u2082peak (12m-Baseline)"
+        vo2_label("Delta VO2peak (12m-Baseline)")
       }
 
       generate_correlation_plot(

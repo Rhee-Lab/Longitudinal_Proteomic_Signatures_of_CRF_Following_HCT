@@ -97,11 +97,10 @@ plot_outcome_var_boxplot <- function(patient_meta, output_dir, filename_suffix, 
     mutate(visit = sub(paste0(outcome_var, "_"), "", visit)) %>%
     mutate(visit = factor(visit, levels = timepoint_order))
 
-  outcome_var_label <- gsub("VO2", "VO\u2082", outcome_var)
   p <- ggplot(outcome_long, aes(x = visit, y = !!sym(outcome_var))) +
     geom_boxplot(outlier.shape = NA, linewidth = 0.4, fill = "#CFE3F2") +
     geom_jitter(width = 0.15, height = 0, alpha = 0.8, size = 1.6, color = "#2E5C8A") +
-    labs(x = "Timepoint", y = paste0(outcome_var_label, " (ml/kg/min)")) +
+    labs(x = "Timepoint", y = vo2_label(paste0(outcome_var, " (ml/kg/min)"))) +
     theme_bw(base_size = font_size) +
     theme(plot.title = element_blank(), panel.grid = element_blank())
 
@@ -138,11 +137,10 @@ plot_outcome_var_trendlines <- function(patient_meta, output_dir, filename_suffi
     mutate(visit = factor(visit, levels = plot_visits)) %>%
     dplyr::left_join(trend_df, by = "PTID")
 
-  outcome_var_label <- gsub("VO2", "VO\u2082", outcome_var)
   group_configs <- list(
-    list(group = "down",   color = "#2166AC", panel_title = paste0("\u0394", outcome_var_label, " < ", -delta_cutoff)),
-    list(group = "static", color = "gray",      panel_title = paste0("|\u0394", outcome_var_label, "| \u2264 ", delta_cutoff)),
-    list(group = "up",     color = "indianred", panel_title = paste0("\u0394", outcome_var_label, " > ", delta_cutoff))
+    list(group = "down",   color = "#2166AC", panel_title = vo2_label(paste0("\u0394", outcome_var, " < ", -delta_cutoff))),
+    list(group = "static", color = "gray",      panel_title = vo2_label(paste0("|\u0394", outcome_var, "| \u2264 ", delta_cutoff))),
+    list(group = "up",     color = "indianred", panel_title = vo2_label(paste0("\u0394", outcome_var, " > ", delta_cutoff)))
   )
 
   plot_list <- list()
@@ -158,7 +156,7 @@ plot_outcome_var_trendlines <- function(patient_meta, output_dir, filename_suffi
       annotate("text", x = -Inf, y = Inf, label = paste0("n=", n_patients),
                hjust = -0.1, vjust = 1.5, size = font_size / ggplot2::.pt, color = "black") +
       labs(x="",
-      y = if (i == 1) paste0(outcome_var_label, " (ml/kg/min)") else NULL,
+      y = if (i == 1) vo2_label(paste0(outcome_var, " (ml/kg/min)")) else NULL,
            title = cfg$panel_title) +
       theme_bw(base_size = font_size) +
       theme(
@@ -198,11 +196,10 @@ plot_delta_outcome_var_histogram <- function(patient_metadata_df, output_dir, fi
     vals <- patient_metadata_df[[cfg$col]]
     if (is.null(vals) || all(is.na(vals))) next
 
-    outcome_var_label <- gsub("VO2", "VO\u2082", outcome_var)
     plot_distribution_histogram(
       data         = vals,
       title        = plot_title,
-      xlab         = paste0("\u0394", outcome_var_label, " (", cfg$label, ")"),
+      xlab         = vo2_label(paste0("\u0394", outcome_var, " (", cfg$label, ")")),
       filename     = file.path(output_dir, paste0("delta_", tolower(outcome_var), cfg$file_tag, filename_suffix, ".png")),
       text_size    = font_size,
       bin_num = 20,
@@ -231,7 +228,7 @@ plot_outcome_var_violin_plot <- function(patient_metadata_df, output_dir, filena
     scale_fill_manual(values = setNames(colors, levels(outcome_var_long$visit))) +
     scale_color_manual(values = setNames(colors, levels(outcome_var_long$visit))) +
     coord_cartesian(ylim = c(0, 50)) +
-    labs(x = "Timepoint", y = gsub("VO2", "VO\u2082", outcome_var)) +
+    labs(x = "Timepoint", y = vo2_label(outcome_var)) +
     theme_bw(base_size = font_size) +
     theme(
       plot.title   = element_blank(),
@@ -289,7 +286,7 @@ plot_outcome_var_violin_allo_vs_auto <- function(patient_metadata_df, output_dir
     scale_fill_manual(values = colors) +
     scale_color_manual(values = colors) +
     coord_cartesian(ylim = c(0, 50)) +
-    labs(x = "Timepoint", y = gsub("VO2", "VO\u2082", outcome_var), fill = "HCT Type", color = "HCT Type") +
+    labs(x = "Timepoint", y = vo2_label(outcome_var), fill = "HCT Type", color = "HCT Type") +
     theme_bw(base_size = font_size) +
     theme(
       plot.title   = element_blank(),
@@ -361,7 +358,7 @@ plot_outcome_var_violin_plot_one_timepoint <- function(patient_metadata_df, outp
     scale_fill_manual(values = c("All Patients" = color_all)) +
     scale_color_manual(values = c("All Patients" = color_all)) +
     coord_cartesian(ylim = y_lim) +
-    labs(x = "", y = paste0(timepoint, " ", gsub("VO2", "VO\u2082", outcome_var))) +
+    labs(x = "", y = vo2_label(paste0(timepoint, " ", outcome_var))) +
     theme_bw(base_size = font_size) +
     theme(
       plot.title      = element_blank(),
