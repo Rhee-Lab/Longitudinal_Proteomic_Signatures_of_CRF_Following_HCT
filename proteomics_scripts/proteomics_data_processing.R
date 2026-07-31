@@ -707,7 +707,6 @@ if (subset_HCT_type == "ALL") {
   )
 
 }
-# Skip if violin plotting if subset_HCT_type != "ALL"
 
 
 ###

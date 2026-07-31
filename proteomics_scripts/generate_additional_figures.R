@@ -280,11 +280,6 @@ generate_scatter_plots()
 
 
 ######################################################################
-# Generate time series heatmaps for manually curated annotations list
-######################################################################
-
-
-######################################################################
 # Generate Top VO2peak-correlating Proteins List
 ######################################################################
 calculate_top_correlating_proteins <- function() {

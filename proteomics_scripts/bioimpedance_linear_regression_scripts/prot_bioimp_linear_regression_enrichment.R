@@ -49,7 +49,6 @@ summary_list <<- list() # pathway summaries per contrast
 reg_list <<- list() # regression tables per contrast
 
 
-
 ###
 # Take into account HCT type subsets
 ###

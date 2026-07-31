@@ -1,6 +1,7 @@
 ###
 # Run all proteomics scripts
 ###
+
 # Batch Correction and Data Processing
 # source(here::here("proteomics_scripts", "proteomics_batch_correction_chain_bridging.R"))
 source(here::here("proteomics_scripts", "proteomics_batch_correction_ComBat.R"))
@@ -68,11 +69,11 @@ for (job_type in choices_HCT_types) {
 
 
 ###
-# Run linear regression
+# Run linear regression, enrichment, and plotting
 ###
 for (job_type in choices_HCT_types) {
   cat(paste0("Running proteomics linear regression script for HCT type: ", job_type, "\n"))
-
+  # Linear Regression
   if (job_type != "ALL") {
     covars_to_remove_at_baseline_temp <- NULL
   } else {
@@ -83,26 +84,16 @@ for (job_type in choices_HCT_types) {
 
   cat(paste0("Finished linear regression for HCT type: ", job_type, "\n"))
   print(Sys.time())
-}
 
-
-###
-# Run linear regression enrichment
-###
-for (job_type in choices_HCT_types) {
+  # Enrichment
   cat(paste0("Running proteomics linear regression enrichment script for HCT type: ", job_type, "\n"))
 
   run_proteomics_linear_regression_enrichment(subset_HCT_type = job_type, jobs_to_run = proteomics_jobs_to_run_linear_regression)
 
   cat(paste0("Finished proteomics linear regression enrichment script for HCT type: ", job_type, "\n"))
   print(Sys.time())
-}
 
-
-###
-# Run linear regression plots
-###
-for (job_type in choices_HCT_types) {
+  # Plots
   cat(paste0("Running proteomics linear regression plots script for HCT type: ", job_type, "\n"))
 
   run_proteomics_linear_regression_plots(subset_HCT_type = job_type, jobs_to_run = proteomics_jobs_to_run_linear_regression)
@@ -113,7 +104,8 @@ for (job_type in choices_HCT_types) {
 
 
 ###
-# Run extreme subsets differential expression
+# Run extreme VO2 subsets (top vs bottom quartile)
+# - differential expression, enrichment, and plotting
 ###
 for (job_type in choices_HCT_types) {
   cat(paste0("Running extreme subset differential expression for HCT type: ", job_type, "\n"))
