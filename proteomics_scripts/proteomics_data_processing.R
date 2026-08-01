@@ -803,7 +803,7 @@ for (cv in corr_vars) {
              hjust = 1.1, vjust = 1.5, size = font_size * 0.2, color = "black") +
     labs(
       x = cv$label,
-      y = expression("VO"[2]*"peak (mL/kg/min)")
+      y = vo2_label("VO2peak (mL/kg/min)")
     ) +
     theme_bw(base_size = font_size*0.7)
 
