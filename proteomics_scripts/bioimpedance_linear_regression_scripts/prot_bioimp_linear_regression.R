@@ -120,7 +120,8 @@ subfolder_pvalue_histograms <- file.path(output_dir, "PValue_Histograms")
 ensure_dir(subfolder_pvalue_histograms)
 subfolder_beta_distributions <- file.path(output_dir, "Beta_Distributions")
 ensure_dir(subfolder_beta_distributions)
-
+output_dir_residuals <- file.path(output_dir, "Residual_Diagnostics")
+ensure_dir(output_dir_residuals)
 
 
 ###
@@ -129,6 +130,20 @@ ensure_dir(subfolder_beta_distributions)
 # Processed protein NPX measurements and patient metadata in proteomics dataset
 prot_measurements <- read.csv(file.path(output_folder, data_processing_folder, proteomics_input_filename))
 patient_meta <- read.csv(file.path(output_folder, data_processing_folder, patient_metadata_filename))
+
+
+###
+# Initialise residual analysis report
+###
+# QQ plots per contrast + summary statistics appended to report.txt.
+# See common_functions.R for the underlying functions.
+residual_report_file <- file.path(output_dir, paste0("report", filename_suffix, ".txt"))
+init_residual_report(residual_report_file,
+                     script_label    = "prot_bioimp_linear_regression.R (protein NPX -> bioimpedance)",
+                     covars          = covars,
+                     subset_HCT_type = subset_HCT_type)
+
+residual_summaries <- list()
 
 
 ###
@@ -149,7 +164,23 @@ for (var in outcome_variable_list) {
 
   # Plot beta coefficient distribution
   plot_beta_distribution(res_Baseline, subfolder_beta_distributions, paste0("Baseline_", var), filename_suffix=filename_suffix)
+
+  # Residual analysis: QQ plots + summary statistics in report.txt.
+  # impute_covars = TRUE mirrors run_contrast() above, which imputes covariates
+  # and fits via fit_one_protein() (min-imputation of missing NPX).
+  residual_summaries[[paste0("Baseline_", var)]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, paste0("Baseline_", var), var, covars_for_baseline,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "Baseline",
+    impute_covars = TRUE, filename_suffix = filename_suffix)
 }
+
+
+###
+# Combined "Summary - All Contrasts" table
+###
+append_residual_summary_table(residual_report_file, residual_summaries)
+message("Residual analysis report written: ", residual_report_file)
 
 
 }

@@ -2797,3 +2797,914 @@ run_all_pca_plot_generation <- function(data_df, sample_meta, output_dir, filena
     )
   }
 }
+
+
+###
+# RESIDUAL DIAGNOSTICS
+###
+###
+# Model frame construction
+###
+prepare_regression_model_data <- function(df, patient_meta, outcome_var, covars,
+                                          measurement_col = "NPX_mean",
+                                          visit_filter    = NULL,
+                                          impute_covars   = FALSE) {
+  # Mirrors the data preparation inside run_regression_contrast() (and the local
+  # run_contrast() in prot_bioimp_linear_regression.R) so that diagnostics are
+  # computed on exactly the rows that were modelled.
+  # Returns list(data = <data.frame>, covars = <covariates actually used>)
+
+  if (!is.null(visit_filter)) {
+    d <- df %>% filter(visit == visit_filter)
+  } else {
+    d <- df
+  }
+
+  if (nrow(d) == 0) return(NULL)
+
+  d <- d %>%
+    left_join(patient_meta, by = "PTID") %>%
+    mutate(across(any_of(c("gender", "Diabetes", "Hypertension")), factor)) %>%
+    filter(!is.na(.data[[outcome_var]]))
+
+  for (cv in covars) {
+    if (cv %in% colnames(d) && is.character(d[[cv]])) d[[cv]] <- factor(d[[cv]])
+  }
+
+  if (nrow(d) == 0) return(NULL)
+
+  valid_covars <- covars[sapply(d[covars], function(x) mean(is.na(x)) <= 0.5)]
+
+  if (impute_covars) {
+    for (cv in valid_covars) {
+      if (is.factor(d[[cv]])) {
+        d[[cv]] <- impute_factor_mode(d[[cv]])
+      } else {
+        d[[cv]] <- impute_numeric_mean(d[[cv]])
+      }
+    }
+  }
+
+  names(d)[names(d) == measurement_col] <- "feature_value"
+
+  list(data = d, covars = valid_covars)
+}
+
+
+prepare_regression_model_data_delta <- function(deltas_df, patient_meta, outcome_var,
+                                                covars, delta_col) {
+  # Mirrors run_regression_contrast_delta(). Covariates are always imputed here,
+  # matching the delta pipeline.
+
+  d <- deltas_df %>%
+    left_join(patient_meta, by = "PTID") %>%
+    mutate(across(any_of(c("gender", "Diabetes", "Hypertension")), factor)) %>%
+    filter(!is.na(.data[[outcome_var]]))
+
+  for (cv in covars) {
+    if (cv %in% colnames(d) && is.character(d[[cv]])) d[[cv]] <- factor(d[[cv]])
+  }
+
+  if (nrow(d) == 0) return(NULL)
+
+  valid_covars <- covars[sapply(d[covars], function(x) mean(is.na(x)) <= 0.5)]
+
+  for (cv in valid_covars) {
+    if (is.factor(d[[cv]])) {
+      d[[cv]] <- impute_factor_mode(d[[cv]])
+    } else {
+      d[[cv]] <- impute_numeric_mean(d[[cv]])
+    }
+  }
+
+  names(d)[names(d) == delta_col] <- "feature_value"
+
+  list(data = d, covars = valid_covars)
+}
+
+
+build_feature_model <- function(df, outcome_var, covars,
+                                predictor_col      = "feature_value",
+                                impute_measurement = FALSE) {
+  # Fits the same model as fit_one_feature() / fit_one_feature_delta() and
+  # returns the fit alongside the rows actually used, so that residuals stay
+  # aligned with patient IDs.
+  # Returns list(fit=, data=, covars_used=, n_imputed=) or NULL.
+
+  if (nrow(df) < 3) return(NULL)
+
+  d <- df
+  d$OUTCOME   <- d[[outcome_var]]
+  d$PREDICTOR <- d[[predictor_col]]
+
+  n_imputed <- sum(is.na(d$PREDICTOR))
+  if (impute_measurement && n_imputed > 0) {
+    if (all(is.na(d$PREDICTOR))) return(NULL)
+    d$PREDICTOR[is.na(d$PREDICTOR)] <- min(d$PREDICTOR, na.rm = TRUE)
+  }
+
+  keep <- character(0)
+  if (length(covars) > 0) {
+    keep <- covars[sapply(d[covars], function(x) {
+      if (is.factor(x) || is.character(x)) return(length(unique(stats::na.omit(x))) > 1)
+      stats::sd(x, na.rm = TRUE) > 0
+    })]
+  }
+
+  ok <- stats::complete.cases(d[, c("OUTCOME", "PREDICTOR", keep), drop = FALSE])
+  d  <- d[ok, , drop = FALSE]
+  if (nrow(d) < 3) return(NULL)
+  if (stats::sd(d$PREDICTOR) == 0) return(NULL)
+
+  form <- stats::as.formula(
+    if (length(keep) == 0) "OUTCOME ~ PREDICTOR"
+    else paste("OUTCOME ~ PREDICTOR +", paste(keep, collapse = " + "))
+  )
+
+  fit <- try(stats::lm(form, data = d), silent = TRUE)
+  if (inherits(fit, "try-error")) return(NULL)
+  if (stats::df.residual(fit) < 2) return(NULL)
+
+  list(fit = fit, data = d, covars_used = keep, n_imputed = n_imputed)
+}
+
+
+###
+# Self-contained assumption tests (avoids adding lmtest / car dependencies)
+###
+breusch_pagan_p <- function(fit) {
+  # Koenker's studentised Breusch-Pagan test. H0: constant residual variance.
+  X <- stats::model.matrix(fit)
+  if (ncol(X) < 2) return(NA_real_)
+  aux_df <- as.data.frame(X[, -1, drop = FALSE])
+  colnames(aux_df) <- paste0("v", seq_len(ncol(aux_df)))
+  aux_df$u2 <- stats::residuals(fit)^2
+  aux <- try(stats::lm(u2 ~ ., data = aux_df), silent = TRUE)
+  if (inherits(aux, "try-error")) return(NA_real_)
+  r2 <- summary(aux)$r.squared
+  if (!is.finite(r2)) return(NA_real_)
+  stats::pchisq(nrow(X) * r2, df = ncol(X) - 1, lower.tail = FALSE)
+}
+
+
+reset_test_p <- function(fit) {
+  # Ramsey RESET (powers = 2). H0: model is linear in the predictors.
+  md <- fit$model
+  if (is.null(md) || nrow(md) < (length(stats::coef(fit)) + 3)) return(NA_real_)
+  md$.fit2 <- stats::fitted(fit)^2
+  fit2 <- try(stats::lm(stats::update(stats::formula(fit), . ~ . + .fit2), data = md),
+              silent = TRUE)
+  if (inherits(fit2, "try-error")) return(NA_real_)
+  a <- try(stats::anova(fit, fit2), silent = TRUE)
+  if (inherits(a, "try-error")) return(NA_real_)
+  a[["Pr(>F)"]][2]
+}
+
+
+vif_for_term <- function(fit, term = "PREDICTOR") {
+  # Variance inflation factor for a single model term.
+  X <- stats::model.matrix(fit)
+  X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+  if (ncol(X) < 2 || !(term %in% colnames(X))) return(NA_real_)
+  j <- which(colnames(X) == term)
+  aux <- try(stats::lm(X[, j] ~ X[, -j, drop = FALSE]), silent = TRUE)
+  if (inherits(aux, "try-error")) return(NA_real_)
+  r2 <- summary(aux)$r.squared
+  if (!is.finite(r2) || r2 >= 1) return(Inf)
+  1 / (1 - r2)
+}
+
+
+moment_skewness <- function(x) {
+  x <- x[is.finite(x)]
+  n <- length(x)
+  if (n < 3) return(NA_real_)
+  m <- mean(x)
+  s <- sqrt(sum((x - m)^2) / n)
+  if (s == 0) return(NA_real_)
+  sum((x - m)^3) / (n * s^3)
+}
+
+
+moment_kurtosis <- function(x) {
+  # Excess kurtosis (0 = normal).
+  x <- x[is.finite(x)]
+  n <- length(x)
+  if (n < 4) return(NA_real_)
+  m <- mean(x)
+  s <- sqrt(sum((x - m)^2) / n)
+  if (s == 0) return(NA_real_)
+  sum((x - m)^4) / (n * s^4) - 3
+}
+
+###
+# Per-model diagnostics
+###
+diagnose_one_model <- function(df, outcome_var, covars,
+                               predictor_col      = "feature_value",
+                               subject_col        = "PTID",
+                               impute_measurement = FALSE,
+                               cooks_multiplier   = 4) {
+  # One row of residual / assumption / influence metrics for a single feature.
+
+  na_ret <- data.frame(
+    n = NA_integer_, df_residual = NA_integer_, beta = NA_real_, p = NA_real_,
+    partial_r2 = NA_real_, shapiro_p = NA_real_,
+    resid_skewness = NA_real_, resid_kurtosis = NA_real_,
+    bp_p = NA_real_, reset_p = NA_real_, vif_predictor = NA_real_,
+    max_cooks = NA_real_, n_influential = NA_integer_,
+    loo_sign_flip = NA, influential_subjects = NA_character_,
+    stringsAsFactors = FALSE
+  )
+
+  bm <- build_feature_model(df, outcome_var, covars,
+                            predictor_col      = predictor_col,
+                            impute_measurement = impute_measurement)
+  if (is.null(bm)) return(na_ret)
+
+  fit <- bm$fit
+  d   <- bm$data
+  cf  <- summary(fit)$coefficients
+  if (!"PREDICTOR" %in% rownames(cf)) return(na_ret)
+
+  n   <- nrow(d)
+  dfr <- stats::df.residual(fit)
+  r   <- stats::residuals(fit)
+
+  sh_p <- if (n >= 3 && n <= 5000 && stats::sd(r) > 0) {
+    tryCatch(stats::shapiro.test(r)$p.value, error = function(e) NA_real_)
+  } else NA_real_
+
+  cd <- tryCatch(stats::cooks.distance(fit), error = function(e) rep(NA_real_, n))
+
+  # Record WHICH patients are influential, so influence can be tallied across
+  # features afterwards: a patient flagged in many models is a global outlier
+  # rather than feature-specific noise.
+  infl_idx <- which(is.finite(cd) & cd > cooks_multiplier / n)
+  subj <- if (subject_col %in% colnames(d)) as.character(d[[subject_col]]) else as.character(seq_len(n))
+
+  # dfbeta(fit) = beta - beta_(i), so leave-one-out coefficients are available
+  # without refitting: this detects associations driven by a single patient.
+  beta <- cf["PREDICTOR", "Estimate"]
+  dfb  <- tryCatch(stats::dfbeta(fit), error = function(e) NULL)
+  sign_flip <- if (!is.null(dfb) && "PREDICTOR" %in% colnames(dfb)) {
+    any(sign(beta - dfb[, "PREDICTOR"]) != sign(beta), na.rm = TRUE)
+  } else NA
+
+  t_val <- cf["PREDICTOR", "t value"]
+
+  data.frame(
+    n              = n,
+    df_residual    = dfr,
+    beta           = beta,
+    p              = cf["PREDICTOR", "Pr(>|t|)"],
+    partial_r2     = if (is.finite(t_val)) t_val^2 / (t_val^2 + dfr) else NA_real_,
+    shapiro_p      = sh_p,
+    resid_skewness = moment_skewness(r),
+    resid_kurtosis = moment_kurtosis(r),
+    bp_p           = breusch_pagan_p(fit),
+    reset_p        = reset_test_p(fit),
+    vif_predictor  = vif_for_term(fit, "PREDICTOR"),
+    max_cooks      = suppressWarnings(max(cd, na.rm = TRUE)),
+    n_influential  = length(infl_idx),
+    loo_sign_flip  = sign_flip,
+    influential_subjects = if (length(infl_idx) > 0) paste(subj[infl_idx], collapse = ";") else "",
+    stringsAsFactors = FALSE
+  )
+}
+
+
+run_residual_diagnostics <- function(model_data, outcome_var, covars, label,
+                                     id_col             = "OlinkID",
+                                     predictor_col      = "feature_value",
+                                     subject_col        = "PTID",
+                                     impute_measurement = FALSE) {
+  # Per-feature diagnostics across all features in a contrast.
+
+  if (is.null(model_data) || nrow(model_data) == 0) return(NULL)
+
+  message("Running residual diagnostics for: ", label)
+
+  model_data %>%
+    group_by(across(all_of(id_col))) %>%
+    group_modify(~diagnose_one_model(.x, outcome_var, covars,
+                                     predictor_col      = predictor_col,
+                                     subject_col        = subject_col,
+                                     impute_measurement = impute_measurement)) %>%
+    ungroup() %>%
+    mutate(
+      contrast    = label,
+      p_FDR       = p.adjust(p,         method = "BH"),
+      shapiro_FDR = p.adjust(shapiro_p, method = "BH"),
+      bp_FDR      = p.adjust(bp_p,      method = "BH"),
+      reset_FDR   = p.adjust(reset_p,   method = "BH")
+    )
+}
+
+
+summarise_residual_diagnostics <- function(diag_df, label) {
+  # One row per contrast: the "Summary_All_Contrasts" statistics.
+  if (is.null(diag_df) || nrow(diag_df) == 0) return(NULL)
+
+  frac <- function(x, thr = 0.05) 100 * mean(x < thr, na.rm = TRUE)
+
+  data.frame(
+    contrast              = label,
+    n_models              = nrow(diag_df),
+    n_models_fitted       = sum(!is.na(diag_df$beta)),
+    median_n              = stats::median(diag_df$n, na.rm = TRUE),
+    median_df_residual    = stats::median(diag_df$df_residual, na.rm = TRUE),
+    pct_nonnormal_raw     = frac(diag_df$shapiro_p),
+    pct_nonnormal_FDR     = frac(diag_df$shapiro_FDR),
+    pct_heterosced_raw    = frac(diag_df$bp_p),
+    pct_heterosced_FDR    = frac(diag_df$bp_FDR),
+    pct_nonlinear_raw     = frac(diag_df$reset_p),
+    pct_nonlinear_FDR     = frac(diag_df$reset_FDR),
+    median_resid_skew     = stats::median(diag_df$resid_skewness, na.rm = TRUE),
+    median_resid_kurtosis = stats::median(diag_df$resid_kurtosis, na.rm = TRUE),
+    median_max_cooks      = stats::median(diag_df$max_cooks, na.rm = TRUE),
+    pct_max_cooks_gt_1    = 100 * mean(diag_df$max_cooks > 1, na.rm = TRUE),
+    pct_with_influential  = 100 * mean(diag_df$n_influential > 0, na.rm = TRUE),
+    pct_vif_gt_5          = 100 * mean(diag_df$vif_predictor > 5, na.rm = TRUE),
+    pct_loo_sign_flip     = 100 * mean(diag_df$loo_sign_flip, na.rm = TRUE),
+    n_sig_FDR05           = sum(diag_df$p_FDR < 0.05, na.rm = TRUE),
+    # Sign flips are only meaningful for features that are actually significant:
+    # a near-zero coefficient flips sign trivially, so the all-feature figure is
+    # dominated by null features and should not be interpreted as instability.
+    pct_loo_sign_flip_sig = if (sum(diag_df$p_FDR < 0.05, na.rm = TRUE) > 0) {
+                              100 * mean(diag_df$loo_sign_flip[which(diag_df$p_FDR < 0.05)], na.rm = TRUE)
+                            } else NA_real_,
+    median_partial_r2     = stats::median(diag_df$partial_r2, na.rm = TRUE),
+    stringsAsFactors      = FALSE
+  )
+}
+
+
+###
+# Subject-level influence
+###
+tally_subject_influence <- function(diag_df, n_subjects = NULL) {
+  # How often is each patient flagged as influential (Cook's D > 4/n) across all
+  # feature models? A patient standing well above the cohort average is a global
+  # outlier and warrants a sensitivity analysis, not a per-protein explanation.
+  if (is.null(diag_df) || nrow(diag_df) == 0) return(NULL)
+
+  ids <- diag_df$influential_subjects
+  ids <- ids[!is.na(ids) & nzchar(ids)]
+  if (length(ids) == 0) return(NULL)
+
+  n_fitted <- sum(!is.na(diag_df$beta))
+  if (n_fitted == 0) return(NULL)
+
+  tally <- data.frame(PTID = unlist(strsplit(ids, ";")), stringsAsFactors = FALSE) %>%
+    count(PTID, name = "n_models_influential") %>%
+    mutate(pct_of_models = 100 * n_models_influential / n_fitted) %>%
+    arrange(desc(n_models_influential))
+
+  # Cohort baseline: average over every patient in the contrast, including those
+  # never flagged. Averaging over flagged patients only would inflate the
+  # reference and hide a single genuine outlier.
+  if (is.null(n_subjects) || !is.finite(n_subjects) || n_subjects < 1) n_subjects <- nrow(tally)
+  attr(tally, "baseline_pct") <- sum(tally$n_models_influential) / (n_subjects * n_fitted) * 100
+  attr(tally, "n_subjects") <- n_subjects
+  tally
+}
+
+
+plot_subject_influence <- function(subject_tally, output_dir, label,
+                                   filename_suffix = "",
+                                   font_size       = 14,
+                                   top_n           = 25) {
+  # Horizontal bar chart of the most frequently influential patients. The dashed
+  # line marks the cohort mean, which matters because the Cook's D > 4/n rule
+  # flags points readily at large n: what identifies a problem patient is
+  # standing well ABOVE the cohort baseline, not the absolute percentage.
+  if (is.null(subject_tally) || nrow(subject_tally) == 0) return(NULL)
+
+  baseline <- attr(subject_tally, "baseline_pct")
+  if (is.null(baseline)) baseline <- mean(subject_tally$pct_of_models, na.rm = TRUE)
+
+  d <- head(subject_tally, top_n) %>%
+    mutate(PTID = factor(PTID, levels = rev(PTID)))
+
+  p <- ggplot(d, aes(x = PTID, y = pct_of_models)) +
+    geom_col(fill = blue_plot_color) +
+    geom_hline(yintercept = baseline, linetype = "dashed", color = red_plot_color) +
+    coord_flip() +
+    labs(
+      title    = paste0("Subject influence: ", label),
+      subtitle = paste0("Dashed line = cohort mean (",
+                        formatC(baseline, format = "f", digits = 1), "%)"),
+      x = "Patient ID",
+      y = "% of feature models where patient is influential (Cook's D > 4/n)"
+    ) +
+    theme_minimal(base_size = font_size)
+
+  fname <- file.path(output_dir,
+                     paste0("Diagnostic_Subject_Influence_", label, filename_suffix, ".png"))
+  ggsave(filename = fname, plot = p, width = 8,
+         height = max(4, nrow(d) * 0.25 + 2), dpi = 600)
+  invisible(fname)
+}
+
+
+append_subject_influence_stats <- function(report_file, subject_tally, top_n = 10) {
+  # Lists the patients furthest above the cohort baseline.
+  if (is.null(subject_tally) || nrow(subject_tally) == 0) {
+    append_report_line(report_file, "  Subject influence        : no influential patients flagged")
+    return(invisible(NULL))
+  }
+
+  baseline <- attr(subject_tally, "baseline_pct")
+  if (is.null(baseline)) baseline <- mean(subject_tally$pct_of_models, na.rm = TRUE)
+  n_subjects <- attr(subject_tally, "n_subjects")
+  top <- head(subject_tally, top_n)
+
+  append_report_line(report_file, "  Subject influence (Cook's D > 4/n, tallied across features)")
+  append_report_line(report_file, paste0("    Patients flagged >=1x  : ", nrow(subject_tally),
+                                         if (!is.null(n_subjects)) paste0(" of ", n_subjects) else ""))
+  append_report_line(report_file, paste0("    Cohort mean            : ",
+                                         formatC(baseline, format = "f", digits = 2), "% of models"))
+  append_report_line(report_file, paste0("    Most influential patients (top ", nrow(top), "):"))
+  for (i in seq_len(nrow(top))) {
+    append_report_line(report_file, paste0(
+      "      ", formatC(top$PTID[i], width = -12),
+      formatC(top$pct_of_models[i], format = "f", digits = 2), "% of models  (",
+      top$n_models_influential[i], " models, ",
+      formatC(top$pct_of_models[i] / baseline, format = "f", digits = 1), "x cohort mean)"))
+  }
+  append_report_line(report_file,
+                     "    Patients far above the cohort mean warrant a sensitivity analysis.")
+  invisible(NULL)
+}
+
+
+###
+# QQ plots
+###
+qq_plot_residuals <- function(residuals_vec, output_dir, label,
+                              filename_suffix = "",
+                              title           = NULL,
+                              subtitle        = NULL,
+                              envelope        = FALSE,
+                              n_sim           = 500,
+                              font_size       = 10,
+                              filename_stem   = "QQ_Residuals") {
+  # Normal QQ plot of standardised residuals. When envelope = TRUE a 95%
+  # pointwise simulation band is drawn, which prevents over-reading the
+  # ordinary wobble in the extreme order statistics.
+
+  r <- residuals_vec[is.finite(residuals_vec)]
+  if (length(r) < 5) {
+    message("Too few residuals for QQ plot: ", label)
+    return(NULL)
+  }
+
+  n  <- length(r)
+  qq <- stats::qqnorm(r, plot.it = FALSE)
+  df <- data.frame(theoretical = qq$x, sample = qq$y)[order(qq$x), ]
+
+  p <- ggplot(df, aes(x = theoretical, y = sample))
+
+  if (envelope && n <= 5000) {
+    sim <- replicate(n_sim, sort(stats::rnorm(n)))
+    band <- data.frame(
+      theoretical = sort(qq$x),
+      lo = apply(sim, 1, stats::quantile, probs = 0.025),
+      hi = apply(sim, 1, stats::quantile, probs = 0.975)
+    )
+    p <- p +
+      geom_ribbon(data = band, aes(x = theoretical, ymin = lo, ymax = hi),
+                  inherit.aes = FALSE, fill = "grey80", alpha = 0.6)
+  }
+
+  p <- p +
+    geom_abline(slope = 1, intercept = 0, color = blue_plot_color, linewidth = 1) +
+    geom_point(size = 1.4, alpha = 0.6, color = "grey20") +
+    labs(
+      title    = title,
+      subtitle = subtitle,
+      x        = "Theoretical quantiles",
+      y        = "Standardized residuals"
+    ) +
+    theme_minimal(base_size = font_size) +
+    theme(
+      plot.title    = element_text(face = "bold", size = font_size),
+      plot.subtitle = element_text(size = font_size),
+      axis.title.x  = element_text(size = font_size),
+      axis.title.y  = element_text(size = font_size)
+    )
+
+  fname <- file.path(output_dir, paste0(filename_stem, "_", label, filename_suffix, ".png"))
+  ggsave(filename = fname, plot = p, width = 6, height = 5.5, dpi = 600)
+  invisible(fname)
+}
+
+
+qq_plot_top_features <- function(model_data, feature_ids, outcome_var, covars,
+                                 output_dir, label,
+                                 id_col             = "OlinkID",
+                                 predictor_col      = "feature_value",
+                                 impute_measurement = FALSE,
+                                 filename_suffix    = "",
+                                 font_size          = 8,
+                                 feature_mapping    = NULL) {
+  # Faceted QQ plots for a handful of individual feature models (typically the
+  # strongest associations), so that per-model residual behaviour can be shown
+  # alongside the pooled QQ plot.
+
+  if (length(feature_ids) == 0) return(NULL)
+
+  qq_list <- list()
+  for (fid in feature_ids) {
+    d <- model_data[model_data[[id_col]] == fid, , drop = FALSE]
+    bm <- build_feature_model(d, outcome_var, covars,
+                              predictor_col      = predictor_col,
+                              impute_measurement = impute_measurement)
+    if (is.null(bm)) next
+    r <- stats::rstandard(bm$fit)
+    r <- r[is.finite(r)]
+    if (length(r) < 5) next
+    qq <- stats::qqnorm(r, plot.it = FALSE)
+
+    nm <- fid
+    if (!is.null(feature_mapping) && all(c(id_col, "SYMBOL") %in% colnames(feature_mapping))) {
+      sym <- feature_mapping$SYMBOL[match(fid, feature_mapping[[id_col]])]
+      if (!is.na(sym) && nzchar(sym)) nm <- paste0(sym, " (", fid, ")")
+    }
+
+    qq_list[[length(qq_list) + 1]] <- data.frame(
+      feature = nm, theoretical = qq$x, sample = qq$y, stringsAsFactors = FALSE
+    )
+  }
+
+  if (length(qq_list) == 0) return(NULL)
+  qq_df <- bind_rows(qq_list)
+
+  p <- ggplot(qq_df, aes(x = theoretical, y = sample)) +
+    geom_abline(slope = 1, intercept = 0, color = blue_plot_color, linewidth = 0.8) +
+    geom_point(size = 1.2, alpha = 0.7, color = "grey20") +
+    facet_wrap(~feature, scales = "free") +
+    labs(x = "Theoretical quantiles", y = "Standardized residuals") +
+    theme_minimal(base_size = font_size)
+
+  fname <- file.path(output_dir,
+                     paste0("QQ_Residuals_TopFeatures_", label, filename_suffix, ".png"))
+  ggsave(filename = fname, plot = p, width = 10, height = 7, dpi = 600)
+  invisible(fname)
+}
+
+
+collect_pooled_standardized_residuals <- function(model_data, outcome_var, covars,
+                                                  id_col             = "OlinkID",
+                                                  predictor_col      = "feature_value",
+                                                  impute_measurement = FALSE,
+                                                  max_features       = 200) {
+  # Pools standardised residuals across feature models. Standardisation makes
+  # residuals comparable across features with different error variances.
+  # A random subset of features is used to keep the plot and memory tractable.
+
+  ids <- unique(model_data[[id_col]])
+  if (length(ids) > max_features) ids <- sample(ids, max_features)
+
+  out <- vector("list", length(ids))
+  for (i in seq_along(ids)) {
+    d <- model_data[model_data[[id_col]] == ids[i], , drop = FALSE]
+    bm <- build_feature_model(d, outcome_var, covars,
+                              predictor_col      = predictor_col,
+                              impute_measurement = impute_measurement)
+    if (is.null(bm)) next
+    out[[i]] <- stats::rstandard(bm$fit)
+  }
+
+  r <- unlist(out, use.names = FALSE)
+  r[is.finite(r)]
+}
+
+
+fit_backbone_model <- function(model_data, outcome_var, covars, subject_col = "PTID") {
+  # The covariate-only model (outcome ~ covariates), one row per patient.
+  # Every feature model shares this backbone, so residual structure here is
+  # inherited by all of them.
+
+  vars <- unique(c(subject_col, outcome_var, covars))
+  vars <- vars[vars %in% colnames(model_data)]
+  pat <- model_data %>%
+    distinct(across(all_of(vars))) %>%
+    filter(!is.na(.data[[outcome_var]]))
+
+  if (nrow(pat) < 5) return(NULL)
+
+  pat$OUTCOME <- pat[[outcome_var]]
+  keep <- covars[covars %in% colnames(pat)]
+  ok <- stats::complete.cases(pat[, c("OUTCOME", keep), drop = FALSE])
+  pat <- pat[ok, , drop = FALSE]
+  if (nrow(pat) < 5) return(NULL)
+
+  form <- stats::as.formula(
+    if (length(keep) == 0) "OUTCOME ~ 1"
+    else paste("OUTCOME ~", paste(keep, collapse = " + "))
+  )
+  fit <- try(stats::lm(form, data = pat), silent = TRUE)
+  if (inherits(fit, "try-error")) return(NULL)
+  list(fit = fit, data = pat, covars_used = keep)
+}
+
+
+###
+# report.txt writing
+###
+init_residual_report <- function(report_file, script_label, covars,
+                                 subset_HCT_type = "ALL", overwrite = TRUE) {
+  if (overwrite && file.exists(report_file)) file.remove(report_file)
+  append_report_line(report_file, strrep("=", 78))
+  append_report_line(report_file, "RESIDUAL ANALYSIS REPORT")
+  append_report_line(report_file, script_label)
+  append_report_line(report_file, strrep("=", 78))
+  append_report_line(report_file, paste0("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))
+  append_report_line(report_file, paste0("HCT subset: ", subset_HCT_type))
+  append_report_line(report_file, paste0("Covariates: ", paste(covars, collapse = ", ")))
+  append_report_line(report_file, "")
+  append_report_line(report_file, "One multivariable linear model is fitted per feature. Assumption")
+  append_report_line(report_file, "statistics are therefore summarised across the feature set: with many")
+  append_report_line(report_file, "models, ~5% are expected to yield p < 0.05 for any given test under the")
+  append_report_line(report_file, "null, so percentages near 5 indicate the assumption holds.")
+  append_report_line(report_file, "")
+  invisible(report_file)
+}
+
+
+append_backbone_residual_stats <- function(report_file, backbone, label) {
+  # Residual statistics for the covariate-only model.
+  if (is.null(backbone)) return(invisible(NULL))
+  fit <- backbone$fit
+  r <- stats::residuals(fit)
+  append_report_line(report_file, paste0("  Covariate-only (backbone) model: ",
+                                         "n = ", nrow(backbone$data),
+                                         ", R2 = ", round(summary(fit)$r.squared, 3)))
+  append_report_line(report_file, paste0("    Shapiro-Wilk p     : ",
+    if (length(r) >= 3 && length(r) <= 5000) signif(stats::shapiro.test(r)$p.value, 3) else NA))
+  append_report_line(report_file, paste0("    Breusch-Pagan p    : ", signif(breusch_pagan_p(fit), 3)))
+  append_report_line(report_file, paste0("    RESET p            : ", signif(reset_test_p(fit), 3)))
+  append_report_line(report_file, paste0("    Residual skewness  : ", round(moment_skewness(r), 3)))
+  append_report_line(report_file, paste0("    Residual kurtosis  : ", round(moment_kurtosis(r), 3)))
+  invisible(NULL)
+}
+
+
+append_contrast_residual_block <- function(report_file, summary_row) {
+  # Human-readable per-contrast block.
+  if (is.null(summary_row)) return(invisible(NULL))
+  s <- summary_row
+  fmt <- function(x, d = 2) if (is.na(x)) "NA" else formatC(x, format = "f", digits = d)
+
+  append_report_line(report_file, strrep("-", 78))
+  append_report_line(report_file, paste0("CONTRAST: ", s$contrast))
+  append_report_line(report_file, strrep("-", 78))
+  append_report_line(report_file, paste0("  Models fitted            : ", s$n_models_fitted, " of ", s$n_models))
+  append_report_line(report_file, paste0("  Median n (patients)      : ", s$median_n))
+  append_report_line(report_file, paste0("  Median residual df       : ", s$median_df_residual))
+  append_report_line(report_file, "")
+  append_report_line(report_file, "  Assumption checks (% of models; ~5% expected by chance for raw p)")
+  append_report_line(report_file, paste0("    Non-normal residuals   : ", fmt(s$pct_nonnormal_raw), "% raw / ",
+                                         fmt(s$pct_nonnormal_FDR), "% FDR   (Shapiro-Wilk)"))
+  append_report_line(report_file, paste0("    Heteroscedastic        : ", fmt(s$pct_heterosced_raw), "% raw / ",
+                                         fmt(s$pct_heterosced_FDR), "% FDR   (Breusch-Pagan)"))
+  append_report_line(report_file, paste0("    Non-linear             : ", fmt(s$pct_nonlinear_raw), "% raw / ",
+                                         fmt(s$pct_nonlinear_FDR), "% FDR   (RESET)"))
+  append_report_line(report_file, "")
+  append_report_line(report_file, "  Residual shape (approximate normality)")
+  append_report_line(report_file, paste0("    Median skewness        : ", fmt(s$median_resid_skew, 3),
+                                         "   (|.|<0.5 approx. normal, >1 substantial)"))
+  append_report_line(report_file, paste0("    Median excess kurtosis : ", fmt(s$median_resid_kurtosis, 3),
+                                         "   (<1 approx. normal, >3 substantial)"))
+  append_report_line(report_file, "")
+  append_report_line(report_file, "  Influence and collinearity")
+  append_report_line(report_file, paste0("    Median max Cook's D    : ", fmt(s$median_max_cooks, 4)))
+  append_report_line(report_file, paste0("    Max Cook's D > 1       : ", fmt(s$pct_max_cooks_gt_1), "%   (substantial influence)"))
+  append_report_line(report_file, paste0("    Models w/ Cook's D>4/n : ", fmt(s$pct_with_influential), "%   (liberal threshold at large n)"))
+  append_report_line(report_file, paste0("    VIF > 5                : ", fmt(s$pct_vif_gt_5), "%"))
+  append_report_line(report_file, paste0("    Significant (FDR<0.05) : ", s$n_sig_FDR05, " features"))
+  append_report_line(report_file, paste0("    LOO sign flip, sig only: ", fmt(s$pct_loo_sign_flip_sig), "%   <- report this one"))
+  append_report_line(report_file, paste0("    LOO sign flip, all     : ", fmt(s$pct_loo_sign_flip), "%   (inflated by null features)"))
+  append_report_line(report_file, paste0("    Median partial R2      : ", fmt(s$median_partial_r2, 4)))
+  append_report_line(report_file, "")
+  invisible(NULL)
+}
+
+
+append_residual_summary_table <- function(report_file, summary_list) {
+  # Combined "Summary_All_Contrasts" table, transposed so that contrasts are
+  # columns (readable as fixed-width text).
+  summary_list <- Filter(Negate(is.null), summary_list)
+  if (length(summary_list) == 0) return(invisible(NULL))
+
+  s <- bind_rows(summary_list)
+  metrics <- setdiff(colnames(s), "contrast")
+
+  w_lab <- 24
+  w_col <- max(14, max(nchar(s$contrast)) + 2)
+
+  pad <- function(x, w, right = TRUE) {
+    x <- as.character(x)
+    if (nchar(x) > w) x <- substr(x, 1, w)
+    if (right) formatC(x, width = w, flag = "-") else formatC(x, width = w)
+  }
+
+  append_report_line(report_file, strrep("=", 78))
+  append_report_line(report_file, "SUMMARY - ALL CONTRASTS")
+  append_report_line(report_file, strrep("=", 78))
+
+  header <- paste0(pad("Metric", w_lab), paste(sapply(s$contrast, pad, w = w_col, right = FALSE), collapse = ""))
+  append_report_line(report_file, header)
+  append_report_line(report_file, strrep("-", nchar(header)))
+
+  for (m in metrics) {
+    vals <- s[[m]]
+    digits <- if (grepl("^pct_", m)) 2
+              else if (grepl("skew|kurtosis", m)) 3
+              else if (grepl("partial_r2|max_cooks", m)) 4
+              else 0
+    vals_fmt <- sapply(vals, function(v) if (is.na(v)) "NA" else formatC(v, format = "f", digits = digits))
+    append_report_line(report_file,
+                       paste0(pad(m, w_lab), paste(sapply(vals_fmt, pad, w = w_col, right = FALSE), collapse = "")))
+  }
+  append_report_line(report_file, "")
+  append_report_line(report_file, "Thresholds: raw percentages near 5 indicate the assumption holds;")
+  append_report_line(report_file, "non-trivial FDR percentages indicate systematic violation.")
+  append_report_line(report_file, "Skewness |.|>1 or excess kurtosis >3 indicates substantial departure")
+  append_report_line(report_file, "from normality. Leave-one-out sign flips among significant features")
+  append_report_line(report_file, "(pct_loo_sign_flip_sig) identify associations that depend on a single")
+  append_report_line(report_file, "patient; the all-feature figure is inflated by near-zero coefficients.")
+  append_report_line(report_file, "")
+  invisible(s)
+}
+
+
+###
+# One-call driver used by the linear regression scripts
+###
+run_contrast_residual_diagnostics <- function(df, patient_meta, label, outcome_var, covars,
+                                              output_dir, report_file,
+                                              id_col          = "OlinkID",
+                                              measurement_col = "NPX_mean",
+                                              visit_filter    = NULL,
+                                              impute_covars   = FALSE,
+                                              delta_col       = NULL,
+                                              deltas_df       = NULL,
+                                              filename_suffix = "",
+                                              font_size       = 8,
+                                              qq_max_features = 200,
+                                              qq_top_n        = 6,
+                                              feature_mapping = NULL) {
+  # Runs residual diagnostics for one contrast: writes QQ plots to output_dir,
+  # appends a summary block to report_file, and returns the one-row summary.
+  #
+  # Cross-sectional / lagged contrasts: pass df + visit_filter.
+  # Delta (double-delta) contrasts: pass deltas_df + delta_col.
+
+  if (!is.null(deltas_df) && !is.null(delta_col)) {
+    prep <- prepare_regression_model_data_delta(deltas_df, patient_meta, outcome_var,
+                                                covars, delta_col)
+    impute_measurement <- FALSE
+  } else {
+    prep <- prepare_regression_model_data(df, patient_meta, outcome_var, covars,
+                                          measurement_col = measurement_col,
+                                          visit_filter    = visit_filter,
+                                          impute_covars   = impute_covars)
+    # fit_one_feature() min-imputes missing measurements only when the calling
+    # pipeline imputes; mirror that here.
+    impute_measurement <- impute_covars
+  }
+
+  if (is.null(prep)) {
+    message("No data available for residual diagnostics: ", label)
+    return(NULL)
+  }
+
+  diag_df <- run_residual_diagnostics(prep$data, outcome_var, prep$covars, label,
+                                      id_col             = id_col,
+                                      impute_measurement = impute_measurement)
+  if (is.null(diag_df)) return(NULL)
+
+  summary_row <- summarise_residual_diagnostics(diag_df, label)
+
+  # QQ plot 1: pooled standardised residuals across feature models
+  pooled <- collect_pooled_standardized_residuals(prep$data, outcome_var, prep$covars,
+                                                  id_col             = id_col,
+                                                  impute_measurement = impute_measurement,
+                                                  max_features       = qq_max_features)
+  qq_plot_residuals(pooled, output_dir, label,
+                    filename_suffix = filename_suffix,
+                    title    = paste0("Pooled residuals: ", label),
+                    subtitle = paste0("Standardized residuals pooled across up to ",
+                                      qq_max_features, " feature models"),
+                    envelope = FALSE, font_size = font_size)
+
+  # QQ plot 2: covariate-only backbone model (shared by every feature model)
+  backbone <- fit_backbone_model(prep$data, outcome_var, prep$covars)
+  if (!is.null(backbone)) {
+    qq_plot_residuals(stats::rstandard(backbone$fit), output_dir, label,
+                      filename_suffix = filename_suffix,
+                      title    = paste0("Covariate-only model: ", label),
+                      subtitle = paste0(outcome_var, " ~ ",
+                                        paste(backbone$covars_used, collapse = " + "),
+                                        "  (grey band = 95% simulation envelope)"),
+                      envelope = TRUE, font_size = font_size,
+                      filename_stem = "QQ_Residuals_Backbone")
+  }
+
+  # QQ plot 3: strongest individual associations
+  top_ids <- diag_df %>% filter(!is.na(p)) %>% arrange(p) %>% head(qq_top_n) %>% pull(!!sym(id_col))
+  qq_plot_top_features(prep$data, top_ids, outcome_var, prep$covars,
+                       output_dir, label,
+                       id_col             = id_col,
+                       impute_measurement = impute_measurement,
+                       filename_suffix    = filename_suffix,
+                       font_size          = font_size,
+                       feature_mapping    = feature_mapping)
+
+  # Subject-level influence
+  subject_tally <- tally_subject_influence(
+    diag_df,
+    n_subjects = dplyr::n_distinct(prep$data$PTID)
+  )
+  plot_subject_influence(subject_tally, output_dir, label,
+                         filename_suffix = filename_suffix,
+                         font_size       = font_size)
+
+  # report.txt
+  append_contrast_residual_block(report_file, summary_row)
+  append_backbone_residual_stats(report_file, backbone, label)
+  append_report_line(report_file, "")
+
+  summary_row
+}
+
+
+run_limma_residual_diagnostics <- function(prot_mat, design, label, output_dir, report_file,
+                                           coef_name       = NULL,
+                                           filename_suffix = "",
+                                           font_size       = 8) {
+  # Residual diagnostics for the limma top-vs-bottom contrast. limma fits the
+  # same design to every protein, so residuals are taken from lmFit() and
+  # summarised across proteins in the same way as the per-protein lm() models.
+
+  if (!requireNamespace("limma", quietly = TRUE)) {
+    message("limma not available; skipping limma residual diagnostics.")
+    return(NULL)
+  }
+
+  fit <- limma::lmFit(prot_mat, design)
+  res_mat <- limma::residuals.MArrayLM(fit, prot_mat)
+  n_samples <- ncol(prot_mat)
+  dfr <- n_samples - ncol(design)
+
+  # Standardise per protein so residuals are comparable across proteins
+  resid_sd <- apply(res_mat, 1, stats::sd, na.rm = TRUE)
+  std_mat <- sweep(res_mat, 1, ifelse(resid_sd > 0, resid_sd, NA), "/")
+
+  shapiro_p <- apply(res_mat, 1, function(r) {
+    r <- r[is.finite(r)]
+    if (length(r) < 3 || stats::sd(r) == 0) return(NA_real_)
+    tryCatch(stats::shapiro.test(r)$p.value, error = function(e) NA_real_)
+  })
+  skew <- apply(res_mat, 1, moment_skewness)
+  kurt <- apply(res_mat, 1, moment_kurtosis)
+  shapiro_fdr <- p.adjust(shapiro_p, method = "BH")
+
+  qq_plot_residuals(as.numeric(std_mat), output_dir, label,
+                    filename_suffix = filename_suffix,
+                    title    = paste0("Pooled residuals: ", label),
+                    subtitle = "Standardized limma residuals pooled across proteins",
+                    envelope = FALSE, font_size = font_size)
+
+  summary_row <- data.frame(
+    contrast              = label,
+    n_models              = nrow(prot_mat),
+    n_models_fitted       = sum(!is.na(resid_sd) & resid_sd > 0),
+    median_n              = n_samples,
+    median_df_residual    = dfr,
+    pct_nonnormal_raw     = 100 * mean(shapiro_p   < 0.05, na.rm = TRUE),
+    pct_nonnormal_FDR     = 100 * mean(shapiro_fdr < 0.05, na.rm = TRUE),
+    median_resid_skew     = stats::median(skew, na.rm = TRUE),
+    median_resid_kurtosis = stats::median(kurt, na.rm = TRUE),
+    stringsAsFactors      = FALSE
+  )
+
+  fmt <- function(x, d = 2) if (is.na(x)) "NA" else formatC(x, format = "f", digits = d)
+  append_report_line(report_file, strrep("-", 78))
+  append_report_line(report_file, paste0("CONTRAST: ", label))
+  append_report_line(report_file, strrep("-", 78))
+  append_report_line(report_file, paste0("  Proteins                 : ", nrow(prot_mat)))
+  append_report_line(report_file, paste0("  Samples (patients)       : ", n_samples))
+  append_report_line(report_file, paste0("  Residual df              : ", dfr))
+  append_report_line(report_file, paste0("  Non-normal residuals     : ",
+                                         fmt(summary_row$pct_nonnormal_raw), "% raw / ",
+                                         fmt(summary_row$pct_nonnormal_FDR), "% FDR   (Shapiro-Wilk)"))
+  append_report_line(report_file, paste0("  Median skewness          : ", fmt(summary_row$median_resid_skew, 3)))
+  append_report_line(report_file, paste0("  Median excess kurtosis   : ", fmt(summary_row$median_resid_kurtosis, 3)))
+  append_report_line(report_file, "")
+
+  summary_row
+}

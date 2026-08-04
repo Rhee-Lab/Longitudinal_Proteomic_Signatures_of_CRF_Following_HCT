@@ -157,6 +157,101 @@ if ("Double_Delta" %in% jobs_to_run) {
 
 
 ###
+# Residual Analysis
+###
+# QQ plots per contrast + summary statistics appended to report.txt.
+# See common_functions.R for the underlying functions.
+output_dir_residuals <- file.path(output_dir, "Residual_Diagnostics")
+ensure_dir(output_dir_residuals)
+residual_report_file <- file.path(output_dir, paste0("report", filename_suffix, ".txt"))
+init_residual_report(residual_report_file,
+                     script_label    = "proteomics_linear_regression.R (protein NPX -> VO2peak)",
+                     covars          = covars,
+                     subset_HCT_type = subset_HCT_type)
+
+residual_summaries <- list()
+
+if ("Cross-Sectional" %in% jobs_to_run) {
+  residual_summaries[["Baseline"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Baseline", "VO2peak_Baseline", covars_for_baseline,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "Baseline",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+  residual_summaries[["6m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "6m", "VO2peak_6m", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "6m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+  residual_summaries[["12m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "12m", "VO2peak_12m", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "12m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+}
+
+if ("Delta" %in% jobs_to_run) {
+  residual_summaries[["Delta_6m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Delta_6m", "delta_VO2peak_6m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "6m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+  residual_summaries[["Delta_12m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Delta_12m", "delta_VO2peak_12m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "12m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+}
+
+if ("Pct_Change" %in% jobs_to_run) {
+  residual_summaries[["Pct_Change_6m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Pct_Change_6m", "pct_change_VO2peak_6m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "6m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+  residual_summaries[["Pct_Change_12m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Pct_Change_12m", "pct_change_VO2peak_12m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "12m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+}
+
+if ("Lagged_Association" %in% jobs_to_run) {
+  residual_summaries[["Baseline_Delta_6m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Baseline_Delta_6m", "delta_VO2peak_6m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "Baseline",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+  residual_summaries[["Baseline_Delta_12m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "Baseline_Delta_12m", "delta_VO2peak_12m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "Baseline",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+  residual_summaries[["6m_Delta_12m"]] <- run_contrast_residual_diagnostics(
+    prot_measurements, patient_meta, "6m_Delta_12m", "delta_VO2peak_12m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", measurement_col = "NPX_mean", visit_filter = "6m",
+    impute_covars = FALSE, filename_suffix = filename_suffix)
+}
+
+if ("Double_Delta" %in% jobs_to_run) {
+  residual_summaries[["Double_Delta_6m"]] <- run_contrast_residual_diagnostics(
+    NULL, patient_meta, "Double_Delta_6m", "delta_VO2peak_6m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", deltas_df = npx_deltas, delta_col = "delta_NPX_6m_Baseline",
+    filename_suffix = filename_suffix)
+  residual_summaries[["Double_Delta_12m"]] <- run_contrast_residual_diagnostics(
+    NULL, patient_meta, "Double_Delta_12m", "delta_VO2peak_12m_Baseline", covars,
+    output_dir = output_dir_residuals, report_file = residual_report_file,
+    id_col = "OlinkID", deltas_df = npx_deltas, delta_col = "delta_NPX_12m_Baseline",
+    filename_suffix = filename_suffix)
+}
+
+# Combined "Summary - All Contrasts" table
+append_residual_summary_table(residual_report_file, residual_summaries)
+message("Residual analysis report written: ", residual_report_file)
+
+
+###
 # Save results per contrast as excel file
 ###
 # Cross-sectional analysis results

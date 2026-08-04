@@ -182,6 +182,7 @@ proteomics_metadata_filename <- "proteomics_patient_metadata.csv"
 protein_metadata_filename <- "olink_mapped.csv" # in input_folder
 VO2peak_distrib_output_subfolder <- "VO2peak_Distributions"
 p_value_histogram_output_subfolder <- "PValue_Histograms"
+residual_diagnostics_output_subfolder <- "Residual_Diagnostics"
 
 outcome_var_prefix <- "VO2peak_"
 patient_ID_col_name <- "PTID"
@@ -232,6 +233,18 @@ ensure_dir(VO2peak_distrib_output_dir)
 
 p_value_histogram_output_dir <- file.path(output_dir, p_value_histogram_output_subfolder)
 ensure_dir(p_value_histogram_output_dir)
+
+residual_diagnostics_output_dir <- file.path(output_dir, residual_diagnostics_output_subfolder)
+ensure_dir(residual_diagnostics_output_dir)
+
+# Residual analysis report (QQ plots + summary statistics).
+# See common_functions.R for the underlying functions.
+residual_report_file <- file.path(output_dir, paste0("report", filename_suffix, ".txt"))
+init_residual_report(residual_report_file,
+                     script_label    = "proteomics_top_vs_bottom_diff_exp.R (limma, top vs bottom VO2peak)",
+                     covars          = covars,
+                     subset_HCT_type = subset_HCT_type)
+residual_summaries <- list()
 
 
 res_limma <- list() # to store limma result dataframes per timepoint
@@ -361,7 +374,25 @@ for (tp in timepoint_order) {
         outputdir = p_value_histogram_output_dir,
         label = paste0("Top_vs_Bottom_", tp)
     )
+
+    # Residual analysis: QQ plot + summary statistics in report.txt
+    residual_summaries[[tp]] <- run_limma_residual_diagnostics(
+        prot_mat        = prot_mat,
+        design          = design_tp,
+        label           = paste0("Top_vs_Bottom_", tp),
+        output_dir      = residual_diagnostics_output_dir,
+        report_file     = residual_report_file,
+        filename_suffix = filename_suffix,
+        font_size       = font_size
+    )
 }
+
+
+###
+# Combined "Summary - All Contrasts" table
+###
+append_residual_summary_table(residual_report_file, residual_summaries)
+message("Residual analysis report written: ", residual_report_file)
 
 
 }
