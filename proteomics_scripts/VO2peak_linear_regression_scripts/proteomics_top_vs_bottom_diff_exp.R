@@ -180,9 +180,6 @@ data_processing_folder <- "proteomics_data_processing" # in output_folder
 proteomics_input_filename <- "proteomics_data_processed.csv"
 proteomics_metadata_filename <- "proteomics_patient_metadata.csv"
 protein_metadata_filename <- "olink_mapped.csv" # in input_folder
-VO2peak_distrib_output_subfolder <- "VO2peak_Distributions"
-p_value_histogram_output_subfolder <- "PValue_Histograms"
-residual_diagnostics_output_subfolder <- "Residual_Diagnostics"
 
 outcome_var_prefix <- "VO2peak_"
 patient_ID_col_name <- "PTID"
@@ -228,13 +225,13 @@ if (subset_HCT_type == "ALLO" || subset_HCT_type == "AUTO") {
 output_dir <- file.path(output_folder, output_script_folder)
 ensure_dir(output_dir)
 
-VO2peak_distrib_output_dir <- file.path(output_dir, VO2peak_distrib_output_subfolder)
+VO2peak_distrib_output_dir <- file.path(output_dir, "VO2peak_Distributions")
 ensure_dir(VO2peak_distrib_output_dir)
 
-p_value_histogram_output_dir <- file.path(output_dir, p_value_histogram_output_subfolder)
+p_value_histogram_output_dir <- file.path(output_dir, "PValue_Histograms")
 ensure_dir(p_value_histogram_output_dir)
 
-residual_diagnostics_output_dir <- file.path(output_dir, residual_diagnostics_output_subfolder)
+residual_diagnostics_output_dir <- file.path(output_dir, "Residual_Diagnostics")
 ensure_dir(residual_diagnostics_output_dir)
 
 # Residual analysis report (QQ plots + summary statistics).
